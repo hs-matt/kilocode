@@ -171,157 +171,218 @@ Reuse works while the user remains in the original directory because CWD equalit
 
 ## 13. End-to-End Scenario: Divergent CWD Triggers New Terminal
 
-### 13.1 Actors
+> This expanded section is a self-contained guide for newcomers. It defines every term, shows how state evolves, and illustrates why a single `cd` can cascade into terminal proliferation.
 
-- User (interactive terminal usage)
-- LLM / Orchestrator issuing an execute request
-- Terminal registry: [TerminalRegistry.getOrCreateTerminal](../src/integrations/terminal/TerminalRegistry.ts#L152)
-- VSCode terminal wrapper: [Terminal](../src/integrations/terminal/Terminal.ts#L11)
-- Environment snapshot builder: [getEnvironmentDetails](../src/core/environment/getEnvironmentDetails.ts#L31)
+### 13.1 Comprehensive Glossary
 
-### 13.2 Initial Preconditions
+| Term                         | Plain Definition                                                  | Role in Scenario                              |
+| ---------------------------- | ----------------------------------------------------------------- | --------------------------------------------- |
+| Task                         | Logical unit of work (conversation, session, scripted workflow).  | Provides a stable, immutable `Task.cwd`.      |
+| Task.cwd                     | The canonical directory chosen when a Task is created.            | Used for file listings & default command cwd. |
+| Terminal (T1, T2, …)         | Wrapped VSCode integrated terminal instance.                      | Execution surface & reuse candidate.          |
+| initialCwd                   | Value captured at terminal creation (never mutates).              | Baseline identity for a terminal.             |
+| runtimeCwd                   | Live cwd from shell integration (`shellIntegration.cwd`).         | Reflects user navigation (e.g., manual `cd`). |
+| Busy flag                    | Boolean marking active command execution.                         | Blocks reuse if true.                         |
+| Terminal Registry            | Allocator invoked per command execution request.                  | Decides reuse vs creation.                    |
+| Reuse Algorithm              | Sequence: (not busy) ∧ (provider match) ∧ (cwd equality).         | Gate controlling terminal explosion.          |
+| Divergence                   | Mismatch between requested cwd (often Task.cwd) and runtimeCwd.   | Primary cause of reuse failure.               |
+| CWD Drift                    | Accumulated divergence after multiple `cd` steps.                 | Increases probability of new terminals.       |
+| environment_details snapshot | Diagnostic text containing Task.cwd and each terminal runtimeCwd. | Observability (no reconciliation).            |
 
-1. Workspace root: `/home/matt/code/system/kilocode`
-2. Task created with `Task.cwd = /home/matt/code/system/kilocode` ([Task](../src/core/task/Task.ts#L353))
-3. First command request arrives from LLM: `npm run build` (implicit cwd = Task.cwd)
-4. No existing terminals; registry must create one.
+### 13.2 Narrative Overview – “Harmony → Drift → Proliferation”
 
-### 13.3 Phase A: First Command (Terminal Creation & Execution)
+1. Harmony: Task and terminal both at root; reuse would succeed.
+2. Drift: User navigates away (`cd`), altering runtimeCwd only.
+3. Proliferation: Registry later compares requested root cwd vs drifted runtimeCwd; strict equality fails → new terminal spawned.
 
-Steps:
-
-1. Orchestrator requests execution with cwd = root.
-2. Registry calls creation path → new VSCode terminal T1 with `initialCwd = root`.
-3. T1 starts; shell integration activates; `shellIntegration.cwd = root`.
-4. Command runs; on completion busy flag cleared.
-5. environment_details snapshot:
-    - Files/tabs anchored to Task.cwd (root).
-    - Terminal section shows T1 cwd = root.
-
-State Timeline (A):
-
-| Time | Event                      | Terminals          |
-| ---- | -------------------------- | ------------------ |
-| t0   | Request(cmd1, cwd=root)    | []                 |
-| t1   | Create T1(initialCwd=root) | T1: cwd=root, busy |
-| t2   | shellIntegration ready     | T1: cwd=root, busy |
-| t3   | cmd1 completes             | T1: cwd=root, free |
-
-### 13.4 Phase B: User Manually Changes Directory
-
-User manually runs inside T1:
-
-```
-cd src/services/command
-```
-
-Shell integration updates runtime cwd:
-
-- T1.runtimeCwd = `/home/matt/code/system/kilocode/src/services/command`
-- `initialCwd` remains root (immutable)
-
-environment_details now (if generated):
-
-- Task.cwd: root (unchanged)
-- Terminal listing: T1 cwd = `.../src/services/command`
-- Divergence not reconciled.
-
-### 13.5 Phase C: Second LLM Command (Reuse Succeeds or Fails?)
-
-Case 1 (would reuse): If LLM also sets cwd = the new path.
-Case 2 (actual problematic path): LLM still requests cwd = root.
-
-We are modeling Case 2.
-
-Steps:
-
-1. Orchestrator requests cmd2: `npm test` with cwd = root (it still believes root is correct context).
-2. Registry selection algorithm (Lines 162–175 then 180–192):
-    - Candidate T1 (same task, provider match) BUT:
-    - Equality check: requested cwd (root) vs T1.getCurrentWorkingDirectory() (shellIntegration cwd = subdir) → mismatch.
-3. No other matching terminal with exact cwd.
-4. Registry creates new terminal T2 with `initialCwd = root`.
-5. cmd2 executed in T2.
-
-State Timeline (B/C Reuse Failure):
-
-| Time | Event                                  | Terminals                                |
-| ---- | -------------------------------------- | ---------------------------------------- |
-| t4   | User: cd src/services/command          | T1: cwd=subdir, free                     |
-| t5   | Request(cmd2, cwd=root)                | T1: cwd=subdir, free                     |
-| t6   | Reuse evaluation: mismatch → create T2 | T1: cwd=subdir, free; T2: cwd=root, busy |
-| t7   | cmd2 completes                         | T1: cwd=subdir, free; T2: cwd=root, free |
-
-### 13.6 ASCII Sequence Diagram
-
-Creation + Divergence + New Terminal:
+### 13.3 High-Level Lifecycle (Mermaid Sequence)
 
 ```mermaid
 sequenceDiagram
-    participant U as User
-    participant L as LLM/Orchestrator
-    participant R as Registry
+    autonumber
+    participant User
+    participant LLM as LLM/Orchestrator
+    participant Registry
     participant T1 as Terminal T1
     participant T2 as Terminal T2
-    L->>R: cmd1 (cwd=root)
-    R->>T1: create T1 (initialCwd=root)
-    T1-->>R: ready (cwd=root)
-    U->>T1: cd src/services/command
-    L->>R: cmd2 (cwd=root)
-    R->>T1: reuse? mismatch
-    R->>T2: create T2 (initialCwd=root)
+
+    Note over LLM,Registry: Phase A (Creation)
+    LLM->>Registry: cmd1 (cwd = root)
+    Registry->>T1: create(initialCwd = root)
+    T1-->>Registry: ready (runtimeCwd = root)
+    T1-->>LLM: output (cmd1 done)
+
+    Note over User,T1: Phase B (User Exploration)
+    User->>T1: cd src/services/command
+    T1-->>T1: runtimeCwd = subdir
+
+    Note over LLM,Registry: Phase C (Second Command)
+    LLM->>Registry: cmd2 (cwd = root)
+    Registry->>Registry: reuse check (root vs subdir) -> fail
+    Registry->>T2: create(initialCwd = root)
+    T2-->>LLM: output (cmd2 done)
 ```
 
-Simplified ASCII flow:
+### 13.4 Architectural Data Flow
 
+```mermaid
+flowchart TD
+    A[Task Created<br/>Task.cwd = root] --> B[Execution Request<br/>requestedCwd = Task.cwd]
+    B --> C{Registry Reuse Check}
+    subgraph Terminal State
+        T1C[T1 initialCwd = root]
+        Drift[User cd<br/>runtimeCwd=subdir]
+    end
+    T1C --> Drift --> C
+    C -->|All criteria pass| Reuse[Reuse Terminal]
+    C -->|CWD mismatch| New[Create New Terminal]
+    Reuse --> Exec[Execute]
+    New --> Exec
+    Exec --> Snap[environment_details Snapshot]
+    Snap --> A
 ```
-cmd1 @ root --> T1(created)
-user: cd src/services/command  (T1 cwd=subdir)
-cmd2 requested @ root -> mismatch with T1(subdir) -> create T2
+
+### 13.5 Phase A – Creation (Deep Dive)
+
+| Time | Event                   | Internal Processing                     | Post-Condition                       |
+| ---- | ----------------------- | --------------------------------------- | ------------------------------------ |
+| t0   | Request cmd1(root)      | Registry invoked with desired cwd=root. | No terminals exist.                  |
+| t1   | Create T1               | Stores `initialCwd=root`; busy=true.    | Terminal identity fixed.             |
+| t2   | Shell integration ready | runtimeCwd becomes root.                | Alignment: initialCwd == runtimeCwd. |
+| t3   | Command completes       | busy=false.                             | T1 eligible for reuse.               |
+
+### 13.6 Phase B – Drift Introduction
+
+| User Action               | Effect on runtimeCwd    | Why Task.cwd Unchanged                       |
+| ------------------------- | ----------------------- | -------------------------------------------- |
+| `cd src/services/command` | runtimeCwd=subdir       | Task model deliberately immutable.           |
+| Additional `cd`           | runtimeCwd deeper       | Divergence widens; reuse likelihood shrinks. |
+| Snapshot generation       | Shows drift (T1=subdir) | Observational only (no mutation).            |
+
+### 13.7 Phase C – Reuse Failure Mechanics
+
+| Step    | Check                     | Result                              |
+| ------- | ------------------------- | ----------------------------------- |
+| 1       | T1 not busy?              | Yes                                 |
+| 2       | Provider matches?         | Yes                                 |
+| 3       | requestedCwd==runtimeCwd? | root != subdir → Fail               |
+| Outcome | Reuse aborted → create T2 | New terminal embodies original cwd. |
+
+### 13.8 Detailed Timelines
+
+#### Phase A (Aligned)
+
+| t   | Action       | T1.runtimeCwd | Registry Decision |
+| --- | ------------ | ------------- | ----------------- |
+| t0  | Request cmd1 | —             | Create T1         |
+| t1  | T1 created   | root          | Busy              |
+| t2  | Shell ready  | root          | Still busy        |
+| t3  | cmd1 done    | root          | Free              |
+
+#### Phase B (Drift)
+
+| t   | Action  | T1.runtimeCwd | Note              |
+| --- | ------- | ------------- | ----------------- |
+| t4  | User cd | subdir        | Divergence begins |
+
+#### Phase C (Mismatch & New Terminal)
+
+| t   | Action              | Observed             | Result                 |
+| --- | ------------------- | -------------------- | ---------------------- |
+| t5  | Request cmd2 (root) | T1.runtimeCwd=subdir | Compare root vs subdir |
+| t6  | Reuse evaluation    | Fails equality       | Create T2              |
+| t7  | cmd2 completes      | T2 busy→free         | Two terminals exist    |
+
+### 13.9 CWD Evolution Table
+
+| Entity              | Before cd | After cd | After T2 Creation |
+| ------------------- | --------- | -------- | ----------------- |
+| Task.cwd            | root      | root     | root              |
+| T1.initialCwd       | root      | root     | root              |
+| T1.runtimeCwd       | root      | subdir   | subdir            |
+| T2.initialCwd       | —         | —        | root              |
+| T2.runtimeCwd       | —         | —        | root              |
+| requestedCwd (cmd2) | root      | root     | root              |
+
+### 13.10 Failure Decision Matrix
+
+| Criterion      | Required           | Actual (T1 at cmd2) | Pass         |
+| -------------- | ------------------ | ------------------- | ------------ |
+| Not Busy       | true               | true                | ✅           |
+| Provider Match | same               | same                | ✅           |
+| CWD Equality   | requested==runtime | root!=subdir        | ❌           |
+| Overall        | all must pass      | one failed          | New terminal |
+
+### 13.11 Drift Amplification Loop
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant T1
+    loop Drift
+        User->>T1: cd deeper/
+        T1-->>T1: runtimeCwd updates
+    end
+    Note over T1: Each deeper path increases mismatch risk for future root requests.
 ```
 
-Legend:
+### 13.12 Positive Alternative (Adaptive Assistant)
 
-- Reuse failure hinge: strict path equality (root vs subdir).
+| Scenario                    | requestedCwd     | T1.runtimeCwd            | Reuse?    | Terminal Count |
+| --------------------------- | ---------------- | ------------------------ | --------- | -------------- |
+| Non-adaptive (current)      | root             | subdir                   | No        | 2              |
+| Adaptive                    | subdir           | subdir                   | Yes       | 1              |
+| Hypothetical “auto realign” | root (inject cd) | subdir (after injection) | Simulated | 1              |
 
-### 13.7 Decision Points
+### 13.13 Influence Sources on Effective CWD (Consolidated)
 
-| Decision                        | Code Location                                                                                 | Input                            | Outcome         |
-| ------------------------------- | --------------------------------------------------------------------------------------------- | -------------------------------- | --------------- |
-| Candidate selection (same-task) | [TerminalRegistry.getOrCreateTerminal](../src/integrations/terminal/TerminalRegistry.ts#L152) | requested cwd vs T1 current cwd  | Fails: mismatch |
-| Fallback pool search            | Same method lines 180–192                                                                     | Any free terminal with exact cwd | None found      |
-| Terminal creation               | Lines 195–199                                                                                 | Need new context                 | T2 created      |
+| Source                    | Mechanism                       | Can Cause Drift?             | Persistent?         |
+| ------------------------- | ------------------------------- | ---------------------------- | ------------------- |
+| Task initialization       | One-time assignment             | No                           | Yes (immutable)     |
+| User manual navigation    | `cd` commands                   | Yes                          | Until changed again |
+| Assistant command request | Uses Task.cwd unless overridden | Indirectly (by not adapting) | Per request         |
+| Shell integration         | Reports live cwd                | Mirrors drift                | Continuous          |
+| environment_details       | Poll & render                   | No (read-only)               | Snapshot only       |
 
-### 13.8 Influence Sources on Effective CWD
+### 13.14 Diagnostics & Observability
 
-| Source                | Influence Mechanism                       | Resulting CWD Used                            |
-| --------------------- | ----------------------------------------- | --------------------------------------------- |
-| Task initialization   | Sets static Task.cwd                      | Basis for file listings & default command cwd |
-| User `cd` in terminal | Updates shellIntegration.cwd (dynamic)    | Affects reuse comparison only                 |
-| LLM command request   | Carries desired cwd (often Task.cwd)      | Drives registry requested cwd                 |
-| environment_details   | Polls dynamic terminal cwd                | Displays divergence; does not feed back       |
-| Path equality util    | [arePathsEqual](../src/utils/path.ts#L54) | Enforces strict exact match                   |
+| Symptom                       | Interpretation        | Suggested Log                        |
+| ----------------------------- | --------------------- | ------------------------------------ |
+| Many similar terminals        | Frequent cwd mismatch | requested vs runtimeCwd per failure  |
+| “Why new terminal?” confusion | Hidden divergence     | Emit structured reuse decision trace |
+| Tests run in wrong area       | Stale requested cwd   | Log last successful runtimeCwd       |
 
-### 13.9 Edge / Variant Cases
+### 13.15 FAQ (New Engineer Oriented)
 
-| Variant                          | Effect                                                         |
-| -------------------------------- | -------------------------------------------------------------- |
-| LLM adapts cwd to subdir         | T1 reused; no new terminal                                     |
-| User cd back to root before cmd2 | T1 reused (cwd equality restored)                              |
-| Multiple cascading cd operations | Each subsequent root-based request spawns yet another terminal |
-| Execa provider usage             | No dynamic divergence; reuse more stable (always initialCwd)   |
+| Question                                    | Answer                                                                                      |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Why not auto-update Task.cwd?               | Prevents accidental global context shifts affecting file listings and path-sensitive logic. |
+| Why exact equality—not ancestor/descendant? | Avoids executing in unintended monorepo sub-packages with different dependencies.           |
+| Could we silently `cd` to align?            | Would hide real divergence & complicate debugging.                                          |
+| Why keep initialCwd immutable?              | Provides reproducible provenance & diffable audit of terminal lifecycles.                   |
+| Is terminal proliferation a bug?            | No—it's a protective consequence of strict correctness rules.                               |
 
-### 13.10 Failure Signals (Indirect)
+### 13.16 Visual Recap (Compact)
 
-- Terminal proliferation visible in environment_details listing.
-- Increased resource usage (more terminal objects tracked).
-- Divergence not signaled explicitly; user infers from multiple terminals.
+```mermaid
+flowchart LR
+    Start[Task.cwd = root] --> Req1[cmd1 req (root)]
+    Req1 --> T1[T1 created<br/>initialCwd=root/runtimeCwd=root]
+    T1 --> Drift[User cd -> runtimeCwd=subdir]
+    Drift --> Req2[cmd2 req (root)]
+    Req2 --> Check{CWD Equal?}
+    Check -->|Yes| Reuse[Reuse T1]
+    Check -->|No| NewT2[Create T2 (root)]
+    NewT2 --> Snapshot[environment_details<br/>Shows root + subdir]
+    Reuse --> Snapshot
+```
 
-### 13.11 Summary of Scenario Dynamics
+### 13.17 Extended Takeaways
 
-A single interactive navigation step by the user (cd) desynchronizes runtime terminal state from orchestrator assumptions. Because reuse logic requires exact cwd match and never mutates canonical task cwd, future commands revert to spawning new terminals until either:
+1. Reuse = intersection of availability, provider parity, and cwd equality—remove one and creation occurs.
+2. Drift is invisible to the orchestrator unless it adapts requested cwd.
+3. Observability surfaces divergence; remediation is a higher-level policy decision.
+4. Immutable initialCwd + mutable runtimeCwd cleanly separate “origin” vs “journey.”
+5. Proliferation is a safety valve, not a defect.
 
-- The orchestrator updates requested cwd, or
-- The user manually returns terminal cwd to the original path.
-
-End of document.
+_End of expanded Section 13._
