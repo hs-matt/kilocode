@@ -8,6 +8,22 @@ This document details how the system:
 - Responds to user-issued `cd`
 - Produces the observed behavior: terminal reuse only when staying in the default directory
 
+## Table of Contents
+
+- [1. Core Components Overview](#1-core-components-overview)
+- [2. Terminal Abstractions](#2-terminal-abstractions)
+- [3. Working Directory Tracking Model](#3-working-directory-tracking-model)
+- [4. environment_details Assembly](#4-environment_details-assembly)
+- [5. Terminal Reuse Decision Logic](#5-terminal-reuse-decision-logic)
+- [6. Handling User-Issued cd](#6-handling-user-issued-cd)
+- [7. Observed Behavior Explanation](#7-observed-behavior-explanation)
+- [8. Identified Limitations](#8-identified-limitations)
+- [9. Root Cause Hypotheses (Ranked)](#9-root-cause-hypotheses-ranked)
+- [10. Mitigation / Enhancement Options (Conceptual)](#10-mitigation--enhancement-options-conceptual)
+- [11. Reference Inventory](#11-reference-inventory)
+- [12. Key Takeaways](#12-key-takeaways)
+- [13. End-to-End Scenario: Divergent CWD Triggers New Terminal](#13-end-to-end-scenario-divergent-cwd-triggers-new-terminal)
+
 ## 1. Core Components Overview
 
 Terminal layer, task/workspace context, environment snapshot builder, and path utilities cooperate to decide when an existing terminal can be reused for a new command request.
@@ -242,20 +258,28 @@ t7    cmd2 completes                                                [T1:cwd=subd
 
 Creation + Divergence + New Terminal:
 
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant L as LLM/Orchestrator
+    participant R as Registry
+    participant T1 as Terminal T1
+    participant T2 as Terminal T2
+    L->>R: cmd1 (cwd=root)
+    R->>T1: create T1 (initialCwd=root)
+    T1-->>R: ready (cwd=root)
+    U->>T1: cd src/services/command
+    L->>R: cmd2 (cwd=root)
+    R->>T1: reuse? mismatch
+    R->>T2: create T2 (initialCwd=root)
 ```
-User           LLM/Orchestrator        Registry                    Terminal T1                Terminal T2
- |                    |                   |                            |                           |
- |---(cmd1,cwd=root)-->|                   | getOrCreateTerminal()      |                           |
- |                    |------------------>| create T1(initialCwd=root) |                           |
- |                    |                   |--------------------------->| (spawn, cwd=root)         |
- |                    |                   |<---------------------------| ready (cwd=root)          |
- |                    |                   |                            | run cmd1 / complete       |
- |---(cd subdir)----------------------------------------------------->| shellIntegration.cwd=subdir
- |                    |---(cmd2,cwd=root)->| getOrCreateTerminal()      |                           |
- |                    |                   | evaluate T1: cwd mismatch  |                           |
- |                    |                   | create T2(initialCwd=root) |                           |
- |                    |                   |--------------------------->|                           | spawn (cwd=root)
- |                    |                   |                            |                           | run cmd2
+
+Simplified ASCII flow:
+
+```
+cmd1 @ root --> T1(created)
+user: cd src/services/command  (T1 cwd=subdir)
+cmd2 requested @ root -> mismatch with T1(subdir) -> create T2
 ```
 
 Legend:
