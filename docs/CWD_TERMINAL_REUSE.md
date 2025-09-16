@@ -52,6 +52,24 @@ Terminal layer, task/workspace context, environment snapshot builder, and path u
 
 No event subscription exists for CWD changes; the model is purely "poll on demand".
 
+### 3.1 Command-Level requestedCwd vs Task.cwd
+
+| Aspect                | Task.cwd (Task constructor)                                             | requestedCwd (per command)                                                       | runtimeCwd (terminal live)                                                                                          |
+| --------------------- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Source                | Set once when creating the Task ([Task](../src/core/task/Task.ts#L353)) | Provided with each execution request (defaults to Task.cwd if omitted)           | Polled from shell integration ([Terminal.getCurrentWorkingDirectory](../src/integrations/terminal/Terminal.ts#L32)) |
+| Mutability            | Immutable (no setter / adoption path)                                   | Mutable across commands (caller-controlled each time)                            | Changes interactively via user `cd`                                                                                 |
+| Persistence           | Lasts for life of Task instance                                         | Exists only for the duration of that single command request                      | Ephemeral snapshot at poll time                                                                                     |
+| Side Effects          | Drives file/tab listings & default execution context                    | Overrides default execution directory for that command only                      | Influences reuse equality check; does NOT mutate Task.cwd or future requestedCwd                                    |
+| Can it update others? | N/A                                                                     | Does NOT write back to Task.cwd                                                  | No automatic propagation into Task.cwd or future requestedCwd                                                       |
+| Adoption Mechanism    | None implemented                                                        | Explicit future commands must re-specify a new cwd to shift context persistently | Would need a (non-existent) “adopt” API to influence canonical context                                              |
+
+Key points:
+
+- Changing directories inside a terminal (runtimeCwd) never updates Task.cwd.
+- A later command can supply a different requestedCwd; this does not retroactively alter earlier commands or Task.cwd.
+- There is currently no API that promotes runtimeCwd → Task.cwd.
+- Effective execution path per command = requestedCwd || Task.cwd (if unspecified).
+
 ## 4. environment_details Assembly
 
 Central builder: [getEnvironmentDetails](../src/core/environment/getEnvironmentDetails.ts#L31).
@@ -175,19 +193,20 @@ Reuse works while the user remains in the original directory because CWD equalit
 
 ### 13.1 Comprehensive Glossary
 
-| Term                         | Plain Definition                                                  | Role in Scenario                              |
-| ---------------------------- | ----------------------------------------------------------------- | --------------------------------------------- |
-| Task                         | Logical unit of work (conversation, session, scripted workflow).  | Provides a stable, immutable `Task.cwd`.      |
-| Task.cwd                     | The canonical directory chosen when a Task is created.            | Used for file listings & default command cwd. |
-| Terminal (T1, T2, …)         | Wrapped VSCode integrated terminal instance.                      | Execution surface & reuse candidate.          |
-| initialCwd                   | Value captured at terminal creation (never mutates).              | Baseline identity for a terminal.             |
-| runtimeCwd                   | Live cwd from shell integration (`shellIntegration.cwd`).         | Reflects user navigation (e.g., manual `cd`). |
-| Busy flag                    | Boolean marking active command execution.                         | Blocks reuse if true.                         |
-| Terminal Registry            | Allocator invoked per command execution request.                  | Decides reuse vs creation.                    |
-| Reuse Algorithm              | Sequence: (not busy) ∧ (provider match) ∧ (cwd equality).         | Gate controlling terminal explosion.          |
-| Divergence                   | Mismatch between requested cwd (often Task.cwd) and runtimeCwd.   | Primary cause of reuse failure.               |
-| CWD Drift                    | Accumulated divergence after multiple `cd` steps.                 | Increases probability of new terminals.       |
-| environment_details snapshot | Diagnostic text containing Task.cwd and each terminal runtimeCwd. | Observability (no reconciliation).            |
+| Term                         | Plain Definition                                                  | Role in Scenario                                    |
+| ---------------------------- | ----------------------------------------------------------------- | --------------------------------------------------- |
+| Task                         | Logical unit of work (conversation, session, scripted workflow).  | Provides a stable, immutable `Task.cwd`.            |
+| Task.cwd                     | The canonical directory chosen when a Task is created.            | Used for file listings & default command cwd.       |
+| requestedCwd (per command)   | CWD value supplied with an individual execution request.          | Overrides default (Task.cwd) for that command only. |
+| Terminal (T1, T2, …)         | Wrapped VSCode integrated terminal instance.                      | Execution surface & reuse candidate.                |
+| initialCwd                   | Value captured at terminal creation (never mutates).              | Baseline identity for a terminal.                   |
+| runtimeCwd                   | Live cwd from shell integration (`shellIntegration.cwd`).         | Reflects user navigation (e.g., manual `cd`).       |
+| Busy flag                    | Boolean marking active command execution.                         | Blocks reuse if true.                               |
+| Terminal Registry            | Allocator invoked per command execution request.                  | Decides reuse vs creation.                          |
+| Reuse Algorithm              | Sequence: (not busy) ∧ (provider match) ∧ (cwd equality).         | Gate controlling terminal explosion.                |
+| Divergence                   | Mismatch between requested cwd (often Task.cwd) and runtimeCwd.   | Primary cause of reuse failure.                     |
+| CWD Drift                    | Accumulated divergence after multiple `cd` steps.                 | Increases probability of new terminals.             |
+| environment_details snapshot | Diagnostic text containing Task.cwd and each terminal runtimeCwd. | Observability (no reconciliation).                  |
 
 ### 13.2 Narrative Overview – “Harmony → Drift → Proliferation”
 
