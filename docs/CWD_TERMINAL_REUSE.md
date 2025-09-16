@@ -153,4 +153,153 @@ Reuse works while the user remains in the original directory because CWD equalit
 - environment_details exposes divergence but does not reconcile it.
 - Determinism & safety (immutable initialCWD) were prioritized over adaptive workflow continuity.
 
+## 13. End-to-End Scenario: Divergent CWD Triggers New Terminal
+
+### 13.1 Actors
+
+- User (interactive terminal usage)
+- LLM / Orchestrator issuing an execute request
+- Terminal registry: [TerminalRegistry.getOrCreateTerminal](src/integrations/terminal/TerminalRegistry.ts:152)
+- VSCode terminal wrapper: [Terminal](src/integrations/terminal/Terminal.ts:11)
+- Environment snapshot builder: [getEnvironmentDetails](src/core/environment/getEnvironmentDetails.ts:31)
+
+### 13.2 Initial Preconditions
+
+1. Workspace root: `/home/matt/code/system/kilocode`
+2. Task created with `Task.cwd = /home/matt/code/system/kilocode` ([Task](src/core/task/Task.ts:353))
+3. First command request arrives from LLM: `npm run build` (implicit cwd = Task.cwd)
+4. No existing terminals; registry must create one.
+
+### 13.3 Phase A: First Command (Terminal Creation & Execution)
+
+Steps:
+
+1. Orchestrator requests execution with cwd = root.
+2. Registry calls creation path → new VSCode terminal T1 with `initialCwd = root`.
+3. T1 starts; shell integration activates; `shellIntegration.cwd = root`.
+4. Command runs; on completion busy flag cleared.
+5. environment_details snapshot:
+    - Files/tabs anchored to Task.cwd (root).
+    - Terminal section shows T1 cwd = root.
+
+State Timeline (A):
+
+```
+Time  Event                                 Registry Terminals
+t0    Request(cmd1, cwd=root)               []
+t1    Create T1(initialCwd=root)            [T1:cwd=root,busy]
+t2    shellIntegration ready                [T1:cwd=root,busy]
+t3    cmd1 completes                        [T1:cwd=root,free]
+```
+
+### 13.4 Phase B: User Manually Changes Directory
+
+User manually runs inside T1:
+
+```
+cd src/services/command
+```
+
+Shell integration updates runtime cwd:
+
+- T1.runtimeCwd = `/home/matt/code/system/kilocode/src/services/command`
+- `initialCwd` remains root (immutable)
+
+environment_details now (if generated):
+
+- Task.cwd: root (unchanged)
+- Terminal listing: T1 cwd = `.../src/services/command`
+- Divergence not reconciled.
+
+### 13.5 Phase C: Second LLM Command (Reuse Succeeds or Fails?)
+
+Case 1 (would reuse): If LLM also sets cwd = the new path.
+Case 2 (actual problematic path): LLM still requests cwd = root.
+
+We are modeling Case 2.
+
+Steps:
+
+1. Orchestrator requests cmd2: `npm test` with cwd = root (it still believes root is correct context).
+2. Registry selection algorithm (Lines 162–175 then 180–192):
+    - Candidate T1 (same task, provider match) BUT:
+    - Equality check: requested cwd (root) vs T1.getCurrentWorkingDirectory() (shellIntegration cwd = subdir) → mismatch.
+3. No other matching terminal with exact cwd.
+4. Registry creates new terminal T2 with `initialCwd = root`.
+5. cmd2 executed in T2.
+
+Timeline (B/C):
+
+```
+Time  Event                                                         Terminals
+t4    User: cd src/services/command                                 [T1:cwd=subdir,free]
+t5    Request(cmd2, cwd=root)                                       [T1:cwd=subdir,free]
+t6    Reuse evaluation: mismatch → create T2                        [T1:cwd=subdir,free][T2:cwd=root,busy]
+t7    cmd2 completes                                                [T1:cwd=subdir,free][T2:cwd=root,free]
+```
+
+### 13.6 ASCII Sequence Diagram
+
+Creation + Divergence + New Terminal:
+
+```
+User           LLM/Orchestrator        Registry                    Terminal T1                Terminal T2
+ |                    |                   |                            |                           |
+ |---(cmd1,cwd=root)-->|                   | getOrCreateTerminal()      |                           |
+ |                    |------------------>| create T1(initialCwd=root) |                           |
+ |                    |                   |--------------------------->| (spawn, cwd=root)         |
+ |                    |                   |<---------------------------| ready (cwd=root)          |
+ |                    |                   |                            | run cmd1 / complete       |
+ |---(cd subdir)----------------------------------------------------->| shellIntegration.cwd=subdir
+ |                    |---(cmd2,cwd=root)->| getOrCreateTerminal()      |                           |
+ |                    |                   | evaluate T1: cwd mismatch  |                           |
+ |                    |                   | create T2(initialCwd=root) |                           |
+ |                    |                   |--------------------------->|                           | spawn (cwd=root)
+ |                    |                   |                            |                           | run cmd2
+```
+
+Legend:
+
+- Reuse failure hinge: strict path equality (root vs subdir).
+
+### 13.7 Decision Points
+
+| Decision                        | Code Location                                                                             | Input                            | Outcome         |
+| ------------------------------- | ----------------------------------------------------------------------------------------- | -------------------------------- | --------------- |
+| Candidate selection (same-task) | [TerminalRegistry.getOrCreateTerminal](src/integrations/terminal/TerminalRegistry.ts:152) | requested cwd vs T1 current cwd  | Fails: mismatch |
+| Fallback pool search            | Same method lines 180–192                                                                 | Any free terminal with exact cwd | None found      |
+| Terminal creation               | Lines 195–199                                                                             | Need new context                 | T2 created      |
+
+### 13.8 Influence Sources on Effective CWD
+
+| Source                | Influence Mechanism                    | Resulting CWD Used                            |
+| --------------------- | -------------------------------------- | --------------------------------------------- |
+| Task initialization   | Sets static Task.cwd                   | Basis for file listings & default command cwd |
+| User `cd` in terminal | Updates shellIntegration.cwd (dynamic) | Affects reuse comparison only                 |
+| LLM command request   | Carries desired cwd (often Task.cwd)   | Drives registry requested cwd                 |
+| environment_details   | Polls dynamic terminal cwd             | Displays divergence; does not feed back       |
+| Path equality util    | [arePathsEqual](src/utils/path.ts:54)  | Enforces strict exact match                   |
+
+### 13.9 Edge / Variant Cases
+
+| Variant                          | Effect                                                         |
+| -------------------------------- | -------------------------------------------------------------- |
+| LLM adapts cwd to subdir         | T1 reused; no new terminal                                     |
+| User cd back to root before cmd2 | T1 reused (cwd equality restored)                              |
+| Multiple cascading cd operations | Each subsequent root-based request spawns yet another terminal |
+| Execa provider usage             | No dynamic divergence; reuse more stable (always initialCwd)   |
+
+### 13.10 Failure Signals (Indirect)
+
+- Terminal proliferation visible in environment_details listing.
+- Increased resource usage (more terminal objects tracked).
+- Divergence not signaled explicitly; user infers from multiple terminals.
+
+### 13.11 Summary of Scenario Dynamics
+
+A single interactive navigation step by the user (cd) desynchronizes runtime terminal state from orchestrator assumptions. Because reuse logic requires exact cwd match and never mutates canonical task cwd, future commands revert to spawning new terminals until either:
+
+- The orchestrator updates requested cwd, or
+- The user manually returns terminal cwd to the original path.
+
 End of document.
