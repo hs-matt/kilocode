@@ -30,43 +30,43 @@ Terminal layer, task/workspace context, environment snapshot builder, and path u
 
 ## 2. Terminal Abstractions
 
-| Component                                                                          | Role                            | Key Points                                                                             |
-| ---------------------------------------------------------------------------------- | ------------------------------- | -------------------------------------------------------------------------------------- |
-| [BaseTerminal](src/integrations/terminal/BaseTerminal.ts#L13)                      | Base abstraction                | Immutable initialCwd (29); default getter returns it (35).                             |
-| [Terminal](src/integrations/terminal/Terminal.ts#L11)                              | VSCode-backed terminal          | Dynamic cwd (32) via shellIntegration; busy marking (44–52); env enrichment (154–167). |
-| [TerminalProcess](src/integrations/terminal/TerminalProcess.ts#L47)                | Command execution orchestration | Parses OSC 133/633 markers (~162–170, 244–249, 283–294).                               |
-| [BaseTerminalProcess](src/integrations/terminal/BaseTerminalProcess.ts#L5)         | Process primitives              | Buffers output; handles exit codes (16–33, 140–148).                                   |
-| [TerminalRegistry](src/integrations/terminal/TerminalRegistry.ts#L152)             | Creation, selection, reuse      | Events (48–124); selection (152–203); classification (232–269).                        |
-| [ShellIntegrationManager](src/integrations/terminal/ShellIntegrationManager.ts#L5) | Shell integration prep          | Temp zsh dir setup & cleanup (13–24, 69–99).                                           |
-| [types](src/integrations/terminal/types.ts#L5)                                     | Types                           | Roo terminal interface & provider semantics.                                           |
+| Component                                                                             | Role                            | Key Points                                                                             |
+| ------------------------------------------------------------------------------------- | ------------------------------- | -------------------------------------------------------------------------------------- |
+| [BaseTerminal](../src/integrations/terminal/BaseTerminal.ts#L13)                      | Base abstraction                | Immutable initialCwd (29); default getter returns it (35).                             |
+| [Terminal](../src/integrations/terminal/Terminal.ts#L11)                              | VSCode-backed terminal          | Dynamic cwd (32) via shellIntegration; busy marking (44–52); env enrichment (154–167). |
+| [TerminalProcess](../src/integrations/terminal/TerminalProcess.ts#L47)                | Command execution orchestration | Parses OSC 133/633 markers (~162–170, 244–249, 283–294).                               |
+| [BaseTerminalProcess](../src/integrations/terminal/BaseTerminalProcess.ts#L5)         | Process primitives              | Buffers output; handles exit codes (16–33, 140–148).                                   |
+| [TerminalRegistry](../src/integrations/terminal/TerminalRegistry.ts#L152)             | Creation, selection, reuse      | Events (48–124); selection (152–203); classification (232–269).                        |
+| [ShellIntegrationManager](../src/integrations/terminal/ShellIntegrationManager.ts#L5) | Shell integration prep          | Temp zsh dir setup & cleanup (13–24, 69–99).                                           |
+| [types](../src/integrations/terminal/types.ts#L5)                                     | Types                           | Roo terminal interface & provider semantics.                                           |
 
 ## 3. Working Directory Tracking Model
 
-| Aspect                      | Mechanism                                                                                                        | Dynamic?     | Notes                               |
-| --------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------ | ----------------------------------- |
-| Initial terminal CWD        | Provided at creation in [TerminalRegistry.createTerminal](src/integrations/terminal/TerminalRegistry.ts#L130)    | No           | Stored in initialCwd.               |
-| Runtime VSCode terminal CWD | shellIntegration.cwd.fsPath via [Terminal.getCurrentWorkingDirectory](src/integrations/terminal/Terminal.ts#L32) | Yes          | Only when shell integration active. |
-| Execa provider CWD          | Base [BaseTerminal.getCurrentWorkingDirectory](src/integrations/terminal/BaseTerminal.ts#L35)                    | No           | Immutable.                          |
-| Task-level CWD              | Set during construction in [Task](src/core/task/Task.ts#L353)                                                    | No           | Drives environment file listings.   |
-| Terminal snapshot CWD       | Polled in [getEnvironmentDetails](src/core/environment/getEnvironmentDetails.ts#L120)                            | Yes (VSCode) | Not persisted to Task.              |
+| Aspect                      | Mechanism                                                                                                           | Dynamic?     | Notes                               |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------- | ------------ | ----------------------------------- |
+| Initial terminal CWD        | Provided at creation in [TerminalRegistry.createTerminal](../src/integrations/terminal/TerminalRegistry.ts#L130)    | No           | Stored in initialCwd.               |
+| Runtime VSCode terminal CWD | shellIntegration.cwd.fsPath via [Terminal.getCurrentWorkingDirectory](../src/integrations/terminal/Terminal.ts#L32) | Yes          | Only when shell integration active. |
+| Execa provider CWD          | Base [BaseTerminal.getCurrentWorkingDirectory](../src/integrations/terminal/BaseTerminal.ts#L35)                    | No           | Immutable.                          |
+| Task-level CWD              | Set during construction in [Task](../src/core/task/Task.ts#L353)                                                    | No           | Drives environment file listings.   |
+| Terminal snapshot CWD       | Polled in [getEnvironmentDetails](../src/core/environment/getEnvironmentDetails.ts#L120)                            | Yes (VSCode) | Not persisted to Task.              |
 
 No event subscription exists for CWD changes; the model is purely "poll on demand".
 
 ## 4. environment_details Assembly
 
-Central builder: [getEnvironmentDetails](src/core/environment/getEnvironmentDetails.ts#L31).
+Central builder: [getEnvironmentDetails](../src/core/environment/getEnvironmentDetails.ts#L31).
 
 Sequence (representative lines):
 
 1. Visible files (44–55) relative to `Task.cwd`.
 2. Open tabs (63–77).
 3. Active terminals (115–135) and inactive terminals (144–179), each polling runtime CWD through `RooTerminal.getCurrentWorkingDirectory()`.
-4. Recently modified files via [FileContextTracker.getAndClearRecentlyModifiedFiles](src/core/context-tracking/FileContextTracker.ts#L203) (186–193).
+4. Recently modified files via [FileContextTracker.getAndClearRecentlyModifiedFiles](../src/core/context-tracking/FileContextTracker.ts#L203) (186–193).
 5. Time & timezone (200–208).
 6. Cost & tokens (211–213, 231).
 7. Mode / model metadata (243–255).
-8. Optional workspace file list (279–289) using [listFiles](src/services/glob/list-files.ts#L33) and formatted by [formatFilesList](src/core/prompts/responses.ts#L112).
-9. Reminders (295–300) via [formatReminderSection](src/core/environment/reminder.ts#L6).
+8. Optional workspace file list (279–289) using [listFiles](../src/services/glob/list-files.ts#L33) and formatted by [formatFilesList](../src/core/prompts/responses.ts#L112).
+9. Reminders (295–300) via [formatReminderSection](../src/core/environment/reminder.ts#L6).
 
 Distinction:
 
@@ -76,7 +76,7 @@ Distinction:
 
 ## 5. Terminal Reuse Decision Logic
 
-Implemented in [TerminalRegistry.getOrCreateTerminal](src/integrations/terminal/TerminalRegistry.ts#L152).
+Implemented in [TerminalRegistry.getOrCreateTerminal](../src/integrations/terminal/TerminalRegistry.ts#L152).
 
 Steps:
 
@@ -84,11 +84,11 @@ Steps:
 2. Else pick any non-busy terminal with provider match and exact CWD equality (lines 180–192).
 3. Else create new terminal (195–199).
 
-Equality uses [arePathsEqual](src/utils/path.ts#L54). There is no hierarchical or fuzzy matching.
+Equality uses [arePathsEqual](../src/utils/path.ts#L54). There is no hierarchical or fuzzy matching.
 
 Busy state:
 
-- Set before execution in [Terminal.runCommand](src/integrations/terminal/Terminal.ts#L44).
+- Set before execution in [Terminal.runCommand](../src/integrations/terminal/Terminal.ts#L44).
 - Also influenced by registry event handlers (startup & completion).
 - Cleared when command ends or process finalizes.
 
@@ -147,19 +147,19 @@ Reuse works while the user remains in the original directory because CWD equalit
 
 ## 11. Reference Inventory
 
-- [BaseTerminal](src/integrations/terminal/BaseTerminal.ts#L13)
-- [Terminal](src/integrations/terminal/Terminal.ts#L11)
-- [TerminalProcess](src/integrations/terminal/TerminalProcess.ts#L47)
-- [TerminalRegistry.getOrCreateTerminal](src/integrations/terminal/TerminalRegistry.ts#L152)
-- [ShellIntegrationManager](src/integrations/terminal/ShellIntegrationManager.ts#L5)
-- [getEnvironmentDetails](src/core/environment/getEnvironmentDetails.ts#L31)
-- [arePathsEqual](src/utils/path.ts#L54)
-- [getWorkspacePath](src/utils/path.ts#L109)
-- [Task](src/core/task/Task.ts#L353)
-- [listFiles](src/services/glob/list-files.ts#L33)
-- [formatFilesList](src/core/prompts/responses.ts#L112)
-- [formatReminderSection](src/core/environment/reminder.ts#L6)
-- [FileContextTracker.getAndClearRecentlyModifiedFiles](src/core/context-tracking/FileContextTracker.ts#L203)
+- [BaseTerminal](../src/integrations/terminal/BaseTerminal.ts#L13)
+- [Terminal](../src/integrations/terminal/Terminal.ts#L11)
+- [TerminalProcess](../src/integrations/terminal/TerminalProcess.ts#L47)
+- [TerminalRegistry.getOrCreateTerminal](../src/integrations/terminal/TerminalRegistry.ts#L152)
+- [ShellIntegrationManager](../src/integrations/terminal/ShellIntegrationManager.ts#L5)
+- [getEnvironmentDetails](../src/core/environment/getEnvironmentDetails.ts#L31)
+- [arePathsEqual](../src/utils/path.ts#L54)
+- [getWorkspacePath](../src/utils/path.ts#L109)
+- [Task](../src/core/task/Task.ts#L353)
+- [listFiles](../src/services/glob/list-files.ts#L33)
+- [formatFilesList](../src/core/prompts/responses.ts#L112)
+- [formatReminderSection](../src/core/environment/reminder.ts#L6)
+- [FileContextTracker.getAndClearRecentlyModifiedFiles](../src/core/context-tracking/FileContextTracker.ts#L203)
 
 ## 12. Key Takeaways
 
@@ -175,14 +175,14 @@ Reuse works while the user remains in the original directory because CWD equalit
 
 - User (interactive terminal usage)
 - LLM / Orchestrator issuing an execute request
-- Terminal registry: [TerminalRegistry.getOrCreateTerminal](src/integrations/terminal/TerminalRegistry.ts#L152)
-- VSCode terminal wrapper: [Terminal](src/integrations/terminal/Terminal.ts#L11)
-- Environment snapshot builder: [getEnvironmentDetails](src/core/environment/getEnvironmentDetails.ts#L31)
+- Terminal registry: [TerminalRegistry.getOrCreateTerminal](../src/integrations/terminal/TerminalRegistry.ts#L152)
+- VSCode terminal wrapper: [Terminal](../src/integrations/terminal/Terminal.ts#L11)
+- Environment snapshot builder: [getEnvironmentDetails](../src/core/environment/getEnvironmentDetails.ts#L31)
 
 ### 13.2 Initial Preconditions
 
 1. Workspace root: `/home/matt/code/system/kilocode`
-2. Task created with `Task.cwd = /home/matt/code/system/kilocode` ([Task](src/core/task/Task.ts#L353))
+2. Task created with `Task.cwd = /home/matt/code/system/kilocode` ([Task](../src/core/task/Task.ts#L353))
 3. First command request arrives from LLM: `npm run build` (implicit cwd = Task.cwd)
 4. No existing terminals; registry must create one.
 
@@ -286,21 +286,21 @@ Legend:
 
 ### 13.7 Decision Points
 
-| Decision                        | Code Location                                                                              | Input                            | Outcome         |
-| ------------------------------- | ------------------------------------------------------------------------------------------ | -------------------------------- | --------------- |
-| Candidate selection (same-task) | [TerminalRegistry.getOrCreateTerminal](src/integrations/terminal/TerminalRegistry.ts#L152) | requested cwd vs T1 current cwd  | Fails: mismatch |
-| Fallback pool search            | Same method lines 180–192                                                                  | Any free terminal with exact cwd | None found      |
-| Terminal creation               | Lines 195–199                                                                              | Need new context                 | T2 created      |
+| Decision                        | Code Location                                                                                 | Input                            | Outcome         |
+| ------------------------------- | --------------------------------------------------------------------------------------------- | -------------------------------- | --------------- |
+| Candidate selection (same-task) | [TerminalRegistry.getOrCreateTerminal](../src/integrations/terminal/TerminalRegistry.ts#L152) | requested cwd vs T1 current cwd  | Fails: mismatch |
+| Fallback pool search            | Same method lines 180–192                                                                     | Any free terminal with exact cwd | None found      |
+| Terminal creation               | Lines 195–199                                                                                 | Need new context                 | T2 created      |
 
 ### 13.8 Influence Sources on Effective CWD
 
-| Source                | Influence Mechanism                    | Resulting CWD Used                            |
-| --------------------- | -------------------------------------- | --------------------------------------------- |
-| Task initialization   | Sets static Task.cwd                   | Basis for file listings & default command cwd |
-| User `cd` in terminal | Updates shellIntegration.cwd (dynamic) | Affects reuse comparison only                 |
-| LLM command request   | Carries desired cwd (often Task.cwd)   | Drives registry requested cwd                 |
-| environment_details   | Polls dynamic terminal cwd             | Displays divergence; does not feed back       |
-| Path equality util    | [arePathsEqual](src/utils/path.ts#L54) | Enforces strict exact match                   |
+| Source                | Influence Mechanism                       | Resulting CWD Used                            |
+| --------------------- | ----------------------------------------- | --------------------------------------------- |
+| Task initialization   | Sets static Task.cwd                      | Basis for file listings & default command cwd |
+| User `cd` in terminal | Updates shellIntegration.cwd (dynamic)    | Affects reuse comparison only                 |
+| LLM command request   | Carries desired cwd (often Task.cwd)      | Drives registry requested cwd                 |
+| environment_details   | Polls dynamic terminal cwd                | Displays divergence; does not feed back       |
+| Path equality util    | [arePathsEqual](../src/utils/path.ts#L54) | Enforces strict exact match                   |
 
 ### 13.9 Edge / Variant Cases
 
