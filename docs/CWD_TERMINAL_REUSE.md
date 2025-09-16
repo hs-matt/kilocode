@@ -14,15 +14,15 @@ Terminal layer, task/workspace context, environment snapshot builder, and path u
 
 ## 2. Terminal Abstractions
 
-| Component                                                                         | Role                            | Key Points                                                                                                    |
-| --------------------------------------------------------------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------- | --- | -------------------------------------------------------- |
-| [BaseTerminal](src/integrations/terminal/BaseTerminal.ts:13)                      | Base abstraction                | Stores immutable `initialCwd` (line 29); default `getCurrentWorkingDirectory()` returns that value (line 35). |
-| [Terminal](src/integrations/terminal/Terminal.ts:11)                              | VSCode-backed terminal          | Overrides `getCurrentWorkingDirectory()` (line 32) to use `shellIntegration.cwd.fsPath                        |     | initialCwd`; marks busy (44–52); enriches env (154–167). |
-| [TerminalProcess](src/integrations/terminal/TerminalProcess.ts:47)                | Command execution orchestration | Parses OSC 133 / 633 markers (~162–170, 244–249, 283–294) to segment output and track lifecycle.              |
-| [BaseTerminalProcess](src/integrations/terminal/BaseTerminalProcess.ts:5)         | Process primitives              | Buffers output, handles exit codes (16–33, 140–148).                                                          |
-| [TerminalRegistry](src/integrations/terminal/TerminalRegistry.ts:152)             | Creation, selection, reuse      | Event wiring (48–124); selection & reuse algorithm (152–203); classification (232–269).                       |
-| [ShellIntegrationManager](src/integrations/terminal/ShellIntegrationManager.ts:5) | Shell integration prep          | Manages temp zsh directory & cleanup (13–24, 69–99).                                                          |
-| [types](src/integrations/terminal/types.ts:5)                                     | Types                           | Roo terminal interface & provider semantics.                                                                  |
+| Component                                                                         | Role                            | Key Points                                                                                       |
+| --------------------------------------------------------------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------ | --- | ----------------------------------------------------------------- |
+| [BaseTerminal](src/integrations/terminal/BaseTerminal.ts:13)                      | Base abstraction                | Immutable `initialCwd` (29); default getter returns it (35).                                     |
+| [Terminal](src/integrations/terminal/Terminal.ts:11)                              | VSCode-backed terminal          | Dynamic cwd via `shellIntegration.cwd.fsPath                                                     |     | initialCwd` (32); busy marking (44–52); env enrichment (154–167). |
+| [TerminalProcess](src/integrations/terminal/TerminalProcess.ts:47)                | Command execution orchestration | Parses OSC 133 / 633 markers (~162–170, 244–249, 283–294) to segment output and track lifecycle. |
+| [BaseTerminalProcess](src/integrations/terminal/BaseTerminalProcess.ts:5)         | Process primitives              | Buffers output; handles exit codes (16–33, 140–148).                                             |
+| [TerminalRegistry](src/integrations/terminal/TerminalRegistry.ts:152)             | Creation, selection, reuse      | Event wiring (48–124); selection & reuse logic (152–203); classification (232–269).              |
+| [ShellIntegrationManager](src/integrations/terminal/ShellIntegrationManager.ts:5) | Shell integration prep          | Temp zsh dir & cleanup (13–24, 69–99).                                                           |
+| [types](src/integrations/terminal/types.ts:5)                                     | Types                           | Roo terminal interface & provider semantics.                                                     |
 
 ## 3. Working Directory Tracking Model
 
