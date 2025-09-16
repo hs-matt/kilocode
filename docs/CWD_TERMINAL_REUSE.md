@@ -200,13 +200,12 @@ Steps:
 
 State Timeline (A):
 
-```
-Time  Event                                 Registry Terminals
-t0    Request(cmd1, cwd=root)               []
-t1    Create T1(initialCwd=root)            [T1:cwd=root,busy]
-t2    shellIntegration ready                [T1:cwd=root,busy]
-t3    cmd1 completes                        [T1:cwd=root,free]
-```
+| Time | Event                      | Terminals          |
+| ---- | -------------------------- | ------------------ |
+| t0   | Request(cmd1, cwd=root)    | []                 |
+| t1   | Create T1(initialCwd=root) | T1: cwd=root, busy |
+| t2   | shellIntegration ready     | T1: cwd=root, busy |
+| t3   | cmd1 completes             | T1: cwd=root, free |
 
 ### 13.4 Phase B: User Manually Changes Directory
 
@@ -244,15 +243,14 @@ Steps:
 4. Registry creates new terminal T2 with `initialCwd = root`.
 5. cmd2 executed in T2.
 
-Timeline (B/C):
+State Timeline (B/C Reuse Failure):
 
-```
-Time  Event                                                         Terminals
-t4    User: cd src/services/command                                 [T1:cwd=subdir,free]
-t5    Request(cmd2, cwd=root)                                       [T1:cwd=subdir,free]
-t6    Reuse evaluation: mismatch → create T2                        [T1:cwd=subdir,free][T2:cwd=root,busy]
-t7    cmd2 completes                                                [T1:cwd=subdir,free][T2:cwd=root,free]
-```
+| Time | Event                                  | Terminals                                |
+| ---- | -------------------------------------- | ---------------------------------------- |
+| t4   | User: cd src/services/command          | T1: cwd=subdir, free                     |
+| t5   | Request(cmd2, cwd=root)                | T1: cwd=subdir, free                     |
+| t6   | Reuse evaluation: mismatch → create T2 | T1: cwd=subdir, free; T2: cwd=root, busy |
+| t7   | cmd2 completes                         | T1: cwd=subdir, free; T2: cwd=root, free |
 
 ### 13.6 ASCII Sequence Diagram
 
